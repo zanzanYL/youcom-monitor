@@ -6,6 +6,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,25 @@ SNAPSHOTS_DIR = BASE_DIR / "snapshots"
 SEARCH_URL = "https://ydc-index.io/v1/search"
 CONTENTS_URL = "https://ydc-index.io/v1/contents"
 REQUEST_TIMEOUT = 60
+LOW_QUALITY_TITLE_MARKERS = (
+    "accessenablerproxy",
+    "pushly",
+    "proxy tool",
+    "web proxy",
+    "proxy page",
+)
+COMPANY_SUFFIXES = {
+    "co",
+    "company",
+    "corp",
+    "corporation",
+    "inc",
+    "incorporated",
+    "limited",
+    "llc",
+    "ltd",
+    "plc",
+}
 
 
 class MonitorError(Exception):
@@ -87,6 +107,39 @@ def normalized_url(url):
     )
 
 
+def is_low_quality_result(result, topic):
+    title = result.get("title")
+    title = title if isinstance(title, str) else ""
+    folded_title = title.casefold()
+    if any(marker in folded_title for marker in LOW_QUALITY_TITLE_MARKERS):
+        return True
+
+    contents = result.get("contents")
+    highlights = contents.get("highlights", []) if isinstance(contents, dict) else []
+    snippets = result.get("snippets")
+    text_fields = [result.get("description")]
+    if isinstance(highlights, list):
+        text_fields.extend(highlights)
+    if isinstance(snippets, list):
+        text_fields.extend(snippets)
+    text_fields = [value for value in text_fields if isinstance(value, str)]
+
+    if not any(re.search(r"\w{2,}", value) for value in text_fields):
+        return True
+
+    searchable_text = " ".join([title, *text_fields])
+    company_words = re.findall(r"\w+", topic.casefold())
+    while company_words and company_words[-1] in COMPANY_SUFFIXES:
+        company_words.pop()
+    if not company_words:
+        return True
+
+    return not all(
+        re.search(rf"(?<!\w){re.escape(word)}(?!\w)", searchable_text, re.IGNORECASE)
+        for word in company_words
+    )
+
+
 def fetch_topic(topic, api_key):
     search_response = api_post(
         SEARCH_URL,
@@ -110,6 +163,8 @@ def fetch_topic(topic, api_key):
     sources = []
     for result in results:
         if not isinstance(result, dict) or not isinstance(result.get("url"), str):
+            continue
+        if is_low_quality_result(result, topic):
             continue
         contents = result.get("contents") or {}
         highlights = contents.get("highlights", []) if isinstance(contents, dict) else []
