@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Company Monitor</title>
+  <title>Competitor Watch</title>
   <style>
     :root { color-scheme: light; font-family: system-ui, -apple-system, sans-serif; color: #172033; background: #f4f6fa; }
     body { max-width: 920px; margin: 0 auto; padding: 36px 20px; }
@@ -21,6 +21,8 @@
     .badge { display: inline-block; margin-left: 8px; padding: 3px 8px; border-radius: 99px; background: #fff0d6; color: #8a4b00; font-size: .78rem; font-weight: 700; }
     .kind { display: inline-block; color: #3159c9; text-transform: uppercase; font-size: .75rem; font-weight: 700; letter-spacing: .04em; }
     .brief { white-space: pre-wrap; line-height: 1.6; overflow-wrap: anywhere; }
+    .citation { font-size: .75em; vertical-align: super; }
+    .citation a { text-decoration: none; }
     .sources { padding-left: 22px; }
     .sources li { margin: 8px 0; overflow-wrap: anywhere; }
     a { color: #2452b6; }
@@ -32,8 +34,8 @@
 </head>
 <body>
   <header>
-    <h1>Company Monitor</h1>
-    <div class="subtle">Recent web updates and cited research briefs.</div>
+    <h1>Competitor Watch</h1>
+    <div class="subtle">Live web changes on your competitors, with receipts</div>
   </header>
 
   {% if error %}<div class="panel error" role="alert">{{ error }}</div>{% endif %}
@@ -67,13 +69,14 @@
       <section class="panel subtle">No alerts yet. Add a company, then choose “Show brief now” for an immediate cited overview.</section>
     {% endif %}
     {% for alert in alerts %}
+      {% set alert_index = loop.index %}
       <article class="alert">
         <div>
           <span class="kind">{{ 'Changed sources' if alert.kind == 'change' else 'Current brief' }}</span>
           {% if alert.sources_disagree %}<span class="badge">Sources disagree</span>{% endif %}
         </div>
         <h3>{{ alert.topic }}</h3>
-        <time>{{ alert.created_at }}</time>
+        <time datetime="{{ alert.created_at }}" data-local-time>{{ alert.created_at }}</time>
         {% if alert.changes %}
           <ul class="changes">
             {% for change in alert.changes %}
@@ -81,12 +84,12 @@
             {% endfor %}
           </ul>
         {% endif %}
-        <div class="brief">{{ alert.brief }}</div>
+        <div class="brief" data-alert-id="{{ alert_index }}">{{ alert.brief }}</div>
         {% if alert.sources %}
           <h4>Sources</h4>
-          <ol class="sources">
+          <ol class="sources" id="sources-{{ alert_index }}">
             {% for source in alert.sources %}
-              <li>
+              <li id="source-{{ alert_index }}-{{ loop.index }}">
                 <a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ source.title }}</a>
                 {% if source.snippets %}
                   <div class="subtle">{{ source.snippets[0] }}</div>
@@ -98,5 +101,50 @@
       </article>
     {% endfor %}
   </main>
+  <script>
+    document.querySelectorAll("time[data-local-time]").forEach((element) => {
+      const date = new Date(element.dateTime);
+      if (!Number.isNaN(date.getTime())) {
+        element.textContent = date.toLocaleString(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short"
+        });
+      }
+    });
+
+    document.querySelectorAll(".brief[data-alert-id]").forEach((brief) => {
+      const alertId = brief.dataset.alertId;
+      const content = brief.textContent || "";
+      const citationPattern = /\[\[([\d,\s]+)\]\]/g;
+      const rendered = document.createDocumentFragment();
+      let cursor = 0;
+      let match;
+
+      while ((match = citationPattern.exec(content)) !== null) {
+        rendered.append(document.createTextNode(content.slice(cursor, match.index)));
+        const citation = document.createElement("sup");
+        citation.className = "citation";
+        let linkedCount = 0;
+
+        match[1].split(",").map((number) => number.trim()).forEach((number) => {
+          const sourceId = `source-${alertId}-${number}`;
+          if (!/^\d+$/.test(number) || !document.getElementById(sourceId)) return;
+          if (linkedCount > 0) citation.append(document.createTextNode(", "));
+          const link = document.createElement("a");
+          link.href = `#${sourceId}`;
+          link.textContent = number;
+          link.setAttribute("aria-label", `Source ${number}`);
+          citation.append(link);
+          linkedCount += 1;
+        });
+
+        rendered.append(linkedCount ? citation : document.createTextNode(match[0]));
+        cursor = citationPattern.lastIndex;
+      }
+
+      rendered.append(document.createTextNode(content.slice(cursor)));
+      brief.replaceChildren(rendered);
+    });
+  </script>
 </body>
 </html>
